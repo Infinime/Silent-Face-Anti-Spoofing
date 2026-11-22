@@ -14,7 +14,7 @@ import time
 
 from src.anti_spoof_predict import AntiSpoofPredict
 from src.generate_patches import CropImage
-from src.utility import parse_model_name
+from src.utility import get_real_score, parse_model_name
 warnings.filterwarnings('ignore')
 
 
@@ -31,7 +31,7 @@ def check_image(image):
         return True
 
 
-def test(image_name, model_dir, device_id):
+def test(image_name, model_dir, device_id, real_threshold):
     model_test = AntiSpoofPredict(device_id)
     image_cropper = CropImage()
     image = cv2.imread(SAMPLE_IMAGE_PATH + image_name)
@@ -39,10 +39,18 @@ def test(image_name, model_dir, device_id):
     if result is False:
         return
     image_bbox = model_test.get_bbox(image)
+    if image_bbox is None:
+        print("No face detected in '{}'.".format(image_name))
+        return
     prediction = np.zeros((1, 3))
     test_speed = 0
     # sum the prediction from single model's result
-    for model_name in os.listdir(model_dir):
+    model_names = [
+        name for name in sorted(os.listdir(model_dir)) if name.endswith(".pth")
+    ]
+    if not model_names:
+        raise ValueError("No .pth models found in {}".format(model_dir))
+    for model_name in model_names:
         h_input, w_input, model_type, scale = parse_model_name(model_name)
         param = {
             "org_img": image,
@@ -60,15 +68,21 @@ def test(image_name, model_dir, device_id):
         test_speed += time.time()-start
 
     # draw result of prediction
-    label = np.argmax(prediction)
-    value = prediction[0][label]/2
-    if label == 1:
-        print("Image '{}' is Real Face. Score: {:.2f}.".format(image_name, value))
+    value = get_real_score(prediction, len(model_names))
+    if value >= real_threshold:
+        print(
+            "Image '{}' is Real Face. Class-1 score: {:.2f}.".format(
+                image_name, value
+            )
+        )
         result_text = "RealFace Score: {:.2f}".format(value)
         color = (255, 0, 0)
     else:
-        print("Image '{}' is Fake Face. Score: {:.2f}.".format(image_name, value))
-        result_text = "FakeFace Score: {:.2f}".format(value)
+        print(
+            "Image '{}' is NOT VERIFIED (treated as fake). "
+            "Class-1 score: {:.2f}.".format(image_name, value)
+        )
+        result_text = "Not verified (fake): {:.2f}".format(value)
         color = (0, 0, 255)
     print("Prediction cost {:.2f} s".format(test_speed))
     cv2.rectangle(
@@ -105,5 +119,13 @@ if __name__ == "__main__":
         type=str,
         default="image_F1.jpg",
         help="image used to test")
+    parser.add_argument(
+        "--real_threshold",
+        type=float,
+        default=0.92,
+        help="Minimum averaged class-1 score required to show Real (default: 0.92)",
+    )
     args = parser.parse_args()
-    test(args.image_name, args.model_dir, args.device_id)
+    if not 0 <= args.real_threshold <= 1:
+        parser.error("--real_threshold must be between 0 and 1")
+    test(args.image_name, args.model_dir, args.device_id, args.real_threshold)

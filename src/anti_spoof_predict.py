@@ -42,11 +42,17 @@ class Detection:
 
         blob = cv2.dnn.blobFromImage(img, 1, mean=(104, 117, 123))
         self.detector.setInput(blob, 'data')
-        out = self.detector.forward('detection_out').squeeze()
+        out = self.detector.forward('detection_out').reshape(-1, 7)
+        if out.size == 0:
+            return None
         max_conf_index = np.argmax(out[:, 2])
+        if out[max_conf_index, 2] < self.detector_confidence:
+            return None
         left, top, right, bottom = out[max_conf_index, 3]*width, out[max_conf_index, 4]*height, \
                                    out[max_conf_index, 5]*width, out[max_conf_index, 6]*height
         bbox = [int(left), int(top), int(right-left+1), int(bottom-top+1)]
+        if bbox[2] <= 0 or bbox[3] <= 0:
+            return None
         return bbox
 
 
@@ -96,13 +102,3 @@ class AntiSpoofPredict(Detection):
             result = model.forward(img)
             result = F.softmax(result).cpu().numpy()
         return result
-
-
-
-
-
-
-
-
-
-
